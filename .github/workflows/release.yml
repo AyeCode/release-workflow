@@ -17,6 +17,11 @@ on:
         type: string
         required: false
         default: https://api.ayecode.io
+      force:
+        description: Roll back to an older version or change the plugin folder (passes force=1)
+        type: boolean
+        required: false
+        default: false
     secrets:
       AYECODE_RELEASE_TOKEN:
         required: true
@@ -61,6 +66,7 @@ jobs:
           SLUG: ${{ inputs.slug }}
           TAG: ${{ inputs.tag }}
           API_BASE: ${{ inputs.api_base }}
+          FORCE: ${{ inputs.force }}
           TOKEN: ${{ secrets.AYECODE_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
@@ -68,6 +74,7 @@ jobs:
           for f in readme.txt README.txt; do [ -f "$f" ] && README="$f" && break; done
           ARGS=(-F "slug=$SLUG" -F "version=$VERSION" -F "tag=$TAG" -F "zip=@$ZIP;type=application/zip")
           [ -n "$README" ] && ARGS+=(-F "readme=<$README")
+          [ "$FORCE" = "true" ] && ARGS+=(-F "force=1")
           curl --fail-with-body -sS -X POST "$API_BASE/v1/releases" -H "Authorization: Bearer $TOKEN" "${ARGS[@]}" -o release.json || { echo; cat release.json; exit 1; }
           echo; jq . release.json
           echo "Released $SLUG $VERSION to $API_BASE" >> "$GITHUB_STEP_SUMMARY"
