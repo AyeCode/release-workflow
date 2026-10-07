@@ -1,0 +1,73 @@
+# Reusable workflow: lives in AyeCode/release-workflow (.github/workflows/release.yml).
+# Called by each add-on repo on a tag push. The tagged tree is the product: no build step.
+name: Release to AyeCode API
+
+on:
+  workflow_call:
+    inputs:
+      slug:
+        description: Plugin folder slug (the top folder of the zip, and the product slug on api.ayecode.io)
+        type: string
+        required: true
+      tag:
+        description: Tag to release (defaults to the pushed tag)
+        type: string
+        required: true
+      api_base:
+        type: string
+        required: false
+        default: https://api.ayecode.io
+    secrets:
+      AYECODE_RELEASE_TOKEN:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Build the zip from the tagged tree
+        shell: bash
+        env:
+          SLUG: ${{ inputs.slug }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          rm -rf build && mkdir -p build/stage
+          # export-ignore from .gitattributes is honoured by git archive; .distignore (wp.org style) is applied after.
+          git archive --format=tar --prefix="$SLUG/" HEAD | tar -x -C build/stage
+          if [ -f .distignore ]; then
+            mkdir -p build/dist
+            rsync -a --exclude-from=.distignore "build/stage/$SLUG/" "build/dist/$SLUG/"
+          else
+            mv build/stage build/dist
+          fi
+          MAIN=$(grep -lE '^\s*\*?\s*Plugin Name:' build/dist/"$SLUG"/*.php | head -1 || true)
+          [ -n "$MAIN" ] || { echo "No top-level PHP file with a Plugin Name header"; exit 1; }
+          HV=$(grep -m1 -E '^\s*\*?\s*Version:' "$MAIN" | sed -E 's/.*Version:[[:space:]]*//; s/[[:space:]].*//')
+          [ "$HV" = "$VERSION" ] || { echo "Tag $TAG is version $VERSION but $MAIN says Version: $HV"; exit 1; }
+          (cd build/dist && zip -qr "../$SLUG-$VERSION.zip" "$SLUG")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "ZIP=build/$SLUG-$VERSION.zip" >> "$GITHUB_ENV"
+          ls -la build/*.zip
+
+      - name: Upload to api.ayecode.io
+        shell: bash
+        env:
+          SLUG: ${{ inputs.slug }}
+          TAG: ${{ inputs.tag }}
+          API_BASE: ${{ inputs.api_base }}
+          TOKEN: ${{ secrets.AYECODE_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          README=""
+          for f in readme.txt README.txt; do [ -f "$f" ] && README="$f" && break; done
+          ARGS=(-F "slug=$SLUG" -F "version=$VERSION" -F "tag=$TAG" -F "zip=@$ZIP;type=application/zip")
+          [ -n "$README" ] && ARGS+=(-F "readme=<$README")
+          curl --fail-with-body -sS -X POST "$API_BASE/v1/releases" -H "Authorization: Bearer $TOKEN" "${ARGS[@]}" -o release.json || { echo; cat release.json; exit 1; }
+          echo; jq . release.json
+          echo "Released $SLUG $VERSION to $API_BASE" >> "$GITHUB_STEP_SUMMARY"
