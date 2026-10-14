@@ -72,7 +72,9 @@ jobs:
           set -euo pipefail
           README=""
           for f in readme.txt README.txt; do [ -f "$f" ] && README="$f" && break; done
-          ARGS=(-F "slug=$SLUG" -F "version=$VERSION" -F "tag=$TAG" -F "zip=@$ZIP;type=application/zip")
+          # repo: the calling repo (github.repository is the caller's in a reusable workflow); the API finds the
+          # product the store linked to this repo and checks the plugin header Update ID against it.
+          ARGS=(-F "slug=$SLUG" -F "version=$VERSION" -F "tag=$TAG" -F "repo=$GITHUB_REPOSITORY" -F "zip=@$ZIP;type=application/zip")
           [ -n "$README" ] && ARGS+=(-F "readme=<$README")
           [ "$FORCE" = "true" ] && ARGS+=(-F "force=1")
           curl --fail-with-body -sS -X POST "$API_BASE/v1/releases" -H "Authorization: Bearer $TOKEN" "${ARGS[@]}" -o release.json || { echo; cat release.json; exit 1; }
